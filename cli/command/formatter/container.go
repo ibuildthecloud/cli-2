@@ -14,9 +14,10 @@ import (
 )
 
 const (
-	defaultContainerTableFormat = "table {{.ID}}\t{{.Image}}\t{{.Command}}\t{{.RunningFor}}\t{{.Status}}\t{{.Ports}}\t{{.Names}}"
+	defaultContainerTableFormat = "table {{.ID}}\t{{.Image}}\t{{.Command}}\t{{.RunningFor}}\t{{.Status}}\t{{.Ports}}\t{{.Names}}\t{{.Pod}}"
 
 	namesHeader      = "NAMES"
+	podHeader        = "POD"
 	commandHeader    = "COMMAND"
 	runningForHeader = "CREATED"
 	mountsHeader     = "MOUNTS"
@@ -47,6 +48,7 @@ created_at: {{.CreatedAt}}
 state: {{- pad .State 1 0}}
 status: {{- pad .Status 1 0}}
 names: {{.Names}}
+pod: {{.Pod}}
 labels: {{- pad .Labels 1 0}}
 ports: {{- pad .Ports 1 0}}
 `
@@ -62,6 +64,9 @@ ports: {{- pad .Ports 1 0}}
 func ContainerWrite(ctx Context, containers []types.Container) error {
 	render := func(format func(subContext SubContext) error) error {
 		for _, container := range containers {
+			if container.Labels["io.kubernetes.docker.type"] == "podsandbox" {
+				continue
+			}
 			err := format(&ContainerContext{trunc: ctx.Trunc, c: container})
 			if err != nil {
 				return err
@@ -91,6 +96,7 @@ func NewContainerContext() *ContainerContext {
 	containerCtx.Header = SubHeaderContext{
 		"ID":           ContainerIDHeader,
 		"Names":        namesHeader,
+		"Pod":          podHeader,
 		"Image":        ImageHeader,
 		"Command":      commandHeader,
 		"CreatedAt":    CreatedAtHeader,
@@ -121,10 +127,24 @@ func (c *ContainerContext) ID() string {
 	return c.c.ID
 }
 
+func (c *ContainerContext) Pod() string {
+	podName := c.c.Labels["io.kubernetes.pod.name"]
+	if podName != "" {
+		podNamespace := c.c.Labels["io.kubernetes.pod.namespace"]
+		return fmt.Sprintf("%s/%s", podNamespace, podName)
+	}
+	return ""
+}
+
 // Names returns a comma-separated string of the container's names, with their
 // slash (/) prefix stripped. Additional names for the container (related to the
 // legacy `--link` feature) are omitted.
 func (c *ContainerContext) Names() string {
+	containerName := c.c.Labels["io.kubernetes.container.name"]
+	if containerName != "" {
+		return containerName
+	}
+
 	names := stripNamePrefix(c.c.Names)
 	if c.trunc {
 		for _, name := range names {

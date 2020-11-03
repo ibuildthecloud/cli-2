@@ -5,7 +5,6 @@ import (
 	"os"
 	"strings"
 
-	pluginmanager "github.com/docker/cli/cli-plugins/manager"
 	"github.com/docker/cli/cli/command"
 	cliconfig "github.com/docker/cli/cli/config"
 	cliflags "github.com/docker/cli/cli/flags"
@@ -206,7 +205,7 @@ func isExperimental(cmd *cobra.Command) bool {
 }
 
 func isPlugin(cmd *cobra.Command) bool {
-	return cmd.Annotations[pluginmanager.CommandAnnotationPlugin] == "true"
+	return false
 }
 
 func hasSubCommands(cmd *cobra.Command) bool {
@@ -251,13 +250,6 @@ func decoratedName(cmd *cobra.Command) string {
 }
 
 func vendorAndVersion(cmd *cobra.Command) string {
-	if vendor, ok := cmd.Annotations[pluginmanager.CommandAnnotationPluginVendor]; ok && isPlugin(cmd) {
-		version := ""
-		if v, ok := cmd.Annotations[pluginmanager.CommandAnnotationPluginVersion]; ok && v != "" {
-			version = ", " + v
-		}
-		return fmt.Sprintf("(%s%s)", vendor, version)
-	}
 	return ""
 }
 
@@ -291,7 +283,7 @@ func invalidPlugins(cmd *cobra.Command) []*cobra.Command {
 }
 
 func invalidPluginReason(cmd *cobra.Command) string {
-	return cmd.Annotations[pluginmanager.CommandAnnotationPluginInvalid]
+	return ""
 }
 
 var usageTemplate = `Usage:

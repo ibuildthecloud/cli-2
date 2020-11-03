@@ -11,7 +11,6 @@ import (
 	"github.com/docker/cli/cli/command/builder"
 	"github.com/docker/cli/cli/command/container"
 	"github.com/docker/cli/cli/command/image"
-	"github.com/docker/cli/cli/command/network"
 	"github.com/docker/cli/cli/command/volume"
 	"github.com/docker/cli/opts"
 	"github.com/docker/docker/api/types/versions"
@@ -76,7 +75,6 @@ func runPrune(dockerCli command.Cli, options pruneOptions) error {
 	}
 	pruneFuncs := []func(dockerCli command.Cli, all bool, filter opts.FilterOpt) (uint64, string, error){
 		container.RunPrune,
-		network.RunPrune,
 	}
 	if options.pruneVolumes {
 		pruneFuncs = append(pruneFuncs, volume.RunPrune)

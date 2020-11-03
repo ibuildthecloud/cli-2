@@ -3,19 +3,15 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
-	"syscall"
 
 	"github.com/docker/cli/cli"
-	pluginmanager "github.com/docker/cli/cli-plugins/manager"
 	"github.com/docker/cli/cli/command"
 	"github.com/docker/cli/cli/command/commands"
 	cliflags "github.com/docker/cli/cli/flags"
 	"github.com/docker/cli/cli/version"
 	"github.com/docker/docker/api/types/versions"
 	"github.com/docker/docker/client"
-	"github.com/moby/buildkit/util/appcontext"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -77,9 +73,6 @@ func setFlagErrorFunc(dockerCli command.Cli, cmd *cobra.Command) {
 	// is called.
 	flagErrorFunc := cmd.FlagErrorFunc()
 	cmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
-		if err := pluginmanager.AddPluginCommandStubs(dockerCli, cmd.Root()); err != nil {
-			return err
-		}
 		if err := isSupported(cmd, dockerCli); err != nil {
 			return err
 		}
@@ -96,18 +89,6 @@ func setupHelpCommand(dockerCli command.Cli, rootCmd, helpCmd *cobra.Command) {
 
 	helpCmd.Run = nil
 	helpCmd.RunE = func(c *cobra.Command, args []string) error {
-		if len(args) > 0 {
-			helpcmd, err := pluginmanager.PluginRunCommand(dockerCli, args[0], rootCmd)
-			if err == nil {
-				err = helpcmd.Run()
-				if err != nil {
-					return err
-				}
-			}
-			if !pluginmanager.IsNotFound(err) {
-				return err
-			}
-		}
 		if origRunE != nil {
 			return origRunE(c, args)
 		}
@@ -116,44 +97,9 @@ func setupHelpCommand(dockerCli command.Cli, rootCmd, helpCmd *cobra.Command) {
 	}
 }
 
-func tryRunPluginHelp(dockerCli command.Cli, ccmd *cobra.Command, cargs []string) error {
-	root := ccmd.Root()
-
-	cmd, _, err := root.Traverse(cargs)
-	if err != nil {
-		return err
-	}
-	helpcmd, err := pluginmanager.PluginRunCommand(dockerCli, cmd.Name(), root)
-	if err != nil {
-		return err
-	}
-	return helpcmd.Run()
-}
-
 func setHelpFunc(dockerCli command.Cli, cmd *cobra.Command) {
 	defaultHelpFunc := cmd.HelpFunc()
 	cmd.SetHelpFunc(func(ccmd *cobra.Command, args []string) {
-		// Add a stub entry for every plugin so they are
-		// included in the help output and so that
-		// `tryRunPluginHelp` can find them or if we fall
-		// through they will be included in the default help
-		// output.
-		if err := pluginmanager.AddPluginCommandStubs(dockerCli, ccmd.Root()); err != nil {
-			ccmd.Println(err)
-			return
-		}
-
-		if len(args) >= 1 {
-			err := tryRunPluginHelp(dockerCli, ccmd, args)
-			if err == nil { // Successfully ran the plugin
-				return
-			}
-			if !pluginmanager.IsNotFound(err) {
-				ccmd.Println(err)
-				return
-			}
-		}
-
 		if err := isSupported(ccmd, dockerCli); err != nil {
 			ccmd.Println(err)
 			return
@@ -191,33 +137,6 @@ func setValidateArgs(dockerCli *command.DockerCli, cmd *cobra.Command) {
 			return cmdArgs(cmd, args)
 		}
 	})
-}
-
-func tryPluginRun(dockerCli command.Cli, cmd *cobra.Command, subcommand string) error {
-	plugincmd, err := pluginmanager.PluginRunCommand(dockerCli, subcommand, cmd)
-	if err != nil {
-		return err
-	}
-
-	go func() {
-		// override SIGTERM handler so we let the plugin shut down first
-		<-appcontext.Context().Done()
-	}()
-
-	if err := plugincmd.Run(); err != nil {
-		statusCode := 1
-		exitErr, ok := err.(*exec.ExitError)
-		if !ok {
-			return err
-		}
-		if ws, ok := exitErr.Sys().(syscall.WaitStatus); ok {
-			statusCode = ws.ExitStatus()
-		}
-		return cli.StatusError{
-			StatusCode: statusCode,
-		}
-	}
-	return nil
 }
 
 func processAliases(dockerCli command.Cli, cmd *cobra.Command, args, osArgs []string) ([]string, []string, error) {
@@ -271,10 +190,6 @@ func runDocker(dockerCli *command.DockerCli) error {
 
 	if len(args) > 0 {
 		if _, _, err := cmd.Find(args); err != nil {
-			err := tryPluginRun(dockerCli, cmd, args[0])
-			if !pluginmanager.IsNotFound(err) {
-				return err
-			}
 			// For plugin not found we fall through to
 			// cmd.Execute() which deals with reporting
 			// "command not found" in a consistent way.
@@ -346,8 +261,8 @@ func hideSubcommandIf(subcmd *cobra.Command, condition func(string) bool, annota
 
 func hideUnsupportedFeatures(cmd *cobra.Command, details versionDetails) error {
 	var (
-		buildKitDisabled = func(_ string) bool { v, _ := command.BuildKitEnabled(details.ServerInfo()); return !v }
-		buildKitEnabled  = func(_ string) bool { v, _ := command.BuildKitEnabled(details.ServerInfo()); return v }
+		buildKitDisabled = func(_ string) bool { return false }
+		buildKitEnabled  = func(_ string) bool { return true }
 		notExperimental  = func(_ string) bool { return !details.ServerInfo().HasExperimental }
 		notOSType        = func(v string) bool { return v != details.ServerInfo().OSType }
 		versionOlderThan = func(v string) bool { return versions.LessThan(details.Client().ClientVersion(), v) }

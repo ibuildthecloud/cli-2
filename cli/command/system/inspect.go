@@ -8,7 +8,6 @@ import (
 	"github.com/docker/cli/cli"
 	"github.com/docker/cli/cli/command"
 	"github.com/docker/cli/cli/command/inspect"
-	"github.com/docker/docker/api/types"
 	apiclient "github.com/docker/docker/client"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
@@ -66,46 +65,9 @@ func inspectImages(ctx context.Context, dockerCli command.Cli) inspect.GetRefFun
 	}
 }
 
-func inspectNetwork(ctx context.Context, dockerCli command.Cli) inspect.GetRefFunc {
-	return func(ref string) (interface{}, []byte, error) {
-		return dockerCli.Client().NetworkInspectWithRaw(ctx, ref, types.NetworkInspectOptions{})
-	}
-}
-
-func inspectNode(ctx context.Context, dockerCli command.Cli) inspect.GetRefFunc {
-	return func(ref string) (interface{}, []byte, error) {
-		return dockerCli.Client().NodeInspectWithRaw(ctx, ref)
-	}
-}
-
-func inspectService(ctx context.Context, dockerCli command.Cli) inspect.GetRefFunc {
-	return func(ref string) (interface{}, []byte, error) {
-		// Service inspect shows defaults values in empty fields.
-		return dockerCli.Client().ServiceInspectWithRaw(ctx, ref, types.ServiceInspectOptions{InsertDefaults: true})
-	}
-}
-
-func inspectTasks(ctx context.Context, dockerCli command.Cli) inspect.GetRefFunc {
-	return func(ref string) (interface{}, []byte, error) {
-		return dockerCli.Client().TaskInspectWithRaw(ctx, ref)
-	}
-}
-
 func inspectVolume(ctx context.Context, dockerCli command.Cli) inspect.GetRefFunc {
 	return func(ref string) (interface{}, []byte, error) {
 		return dockerCli.Client().VolumeInspectWithRaw(ctx, ref)
-	}
-}
-
-func inspectPlugin(ctx context.Context, dockerCli command.Cli) inspect.GetRefFunc {
-	return func(ref string) (interface{}, []byte, error) {
-		return dockerCli.Client().PluginInspectWithRaw(ctx, ref)
-	}
-}
-
-func inspectSecret(ctx context.Context, dockerCli command.Cli) inspect.GetRefFunc {
-	return func(ref string) (interface{}, []byte, error) {
-		return dockerCli.Client().SecretInspectWithRaw(ctx, ref)
 	}
 }
 
@@ -126,48 +88,9 @@ func inspectAll(ctx context.Context, dockerCli command.Cli, getSize bool, typeCo
 			objectInspector: inspectImages(ctx, dockerCli),
 		},
 		{
-			objectType:      "network",
-			objectInspector: inspectNetwork(ctx, dockerCli),
-		},
-		{
 			objectType:      "volume",
 			objectInspector: inspectVolume(ctx, dockerCli),
 		},
-		{
-			objectType:      "service",
-			isSwarmObject:   true,
-			objectInspector: inspectService(ctx, dockerCli),
-		},
-		{
-			objectType:      "task",
-			isSwarmObject:   true,
-			objectInspector: inspectTasks(ctx, dockerCli),
-		},
-		{
-			objectType:      "node",
-			isSwarmObject:   true,
-			objectInspector: inspectNode(ctx, dockerCli),
-		},
-		{
-			objectType:      "plugin",
-			objectInspector: inspectPlugin(ctx, dockerCli),
-		},
-		{
-			objectType:      "secret",
-			isSwarmObject:   true,
-			objectInspector: inspectSecret(ctx, dockerCli),
-		},
-	}
-
-	// isSwarmManager does an Info API call to verify that the daemon is
-	// a swarm manager.
-	isSwarmManager := func() bool {
-		info, err := dockerCli.Client().Info(ctx)
-		if err != nil {
-			fmt.Fprintln(dockerCli.Err(), err)
-			return false
-		}
-		return info.Swarm.ControlAvailable
 	}
 
 	return func(ref string) (interface{}, []byte, error) {
@@ -177,7 +100,7 @@ func inspectAll(ctx context.Context, dockerCli command.Cli, getSize bool, typeCo
 			swarmUnsupported
 		)
 
-		isSwarmSupported := swarmSupportUnknown
+		isSwarmSupported := swarmUnsupported
 
 		for _, inspectData := range inspectAutodetect {
 			if typeConstraint != "" && inspectData.objectType != typeConstraint {
@@ -185,11 +108,7 @@ func inspectAll(ctx context.Context, dockerCli command.Cli, getSize bool, typeCo
 			}
 			if typeConstraint == "" && inspectData.isSwarmObject {
 				if isSwarmSupported == swarmSupportUnknown {
-					if isSwarmManager() {
-						isSwarmSupported = swarmSupported
-					} else {
-						isSwarmSupported = swarmUnsupported
-					}
+					isSwarmSupported = swarmUnsupported
 				}
 				if isSwarmSupported == swarmUnsupported {
 					continue

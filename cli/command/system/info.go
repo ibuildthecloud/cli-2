@@ -4,16 +4,13 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"sort"
 	"strings"
 
 	"github.com/docker/cli/cli"
-	pluginmanager "github.com/docker/cli/cli-plugins/manager"
 	"github.com/docker/cli/cli/command"
 	"github.com/docker/cli/cli/debug"
 	"github.com/docker/cli/templates"
 	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/swarm"
 	"github.com/docker/go-units"
 	"github.com/spf13/cobra"
 )
@@ -25,7 +22,6 @@ type infoOptions struct {
 type clientInfo struct {
 	Debug    bool
 	Context  string
-	Plugins  []pluginmanager.Plugin
 	Warnings []string
 }
 
@@ -75,11 +71,6 @@ func runInfo(cmd *cobra.Command, dockerCli command.Cli, opts *infoOptions) error
 		Context: dockerCli.CurrentContext(),
 		Debug:   debug.IsEnabled(),
 	}
-	if plugins, err := pluginmanager.ListPlugins(dockerCli, cmd.Root()); err == nil {
-		info.ClientInfo.Plugins = plugins
-	} else {
-		info.ClientErrors = append(info.ClientErrors, err.Error())
-	}
 
 	if opts.format == "" {
 		return prettyPrintInfo(dockerCli, info)
@@ -116,21 +107,6 @@ func prettyPrintInfo(dockerCli command.Cli, info info) error {
 func prettyPrintClientInfo(dockerCli command.Cli, info clientInfo) {
 	fmt.Fprintln(dockerCli.Out(), " Context:   ", info.Context)
 	fmt.Fprintln(dockerCli.Out(), " Debug Mode:", info.Debug)
-
-	if len(info.Plugins) > 0 {
-		fmt.Fprintln(dockerCli.Out(), " Plugins:")
-		for _, p := range info.Plugins {
-			if p.Err == nil {
-				var version string
-				if p.Version != "" {
-					version = ", " + p.Version
-				}
-				fmt.Fprintf(dockerCli.Out(), "  %s: %s (%s%s)\n", p.Name, p.ShortDescription, p.Vendor, version)
-			} else {
-				info.Warnings = append(info.Warnings, fmt.Sprintf("WARNING: Plugin %q is not valid: %s", p.Path, p.Err))
-			}
-		}
-	}
 
 	if len(info.Warnings) > 0 {
 		fmt.Fprintln(dockerCli.Err(), strings.Join(info.Warnings, "\n"))
@@ -171,9 +147,6 @@ func prettyPrintServerInfo(dockerCli command.Cli, info types.Info) []error {
 	}
 
 	fmt.Fprintln(dockerCli.Out(), "  Log:", strings.Join(info.Plugins.Log, " "))
-
-	fmt.Fprintln(dockerCli.Out(), " Swarm:", info.Swarm.LocalNodeState)
-	printSwarmInfo(dockerCli, info)
 
 	if len(info.Runtimes) > 0 {
 		fmt.Fprint(dockerCli.Out(), " Runtimes:")
@@ -307,76 +280,6 @@ func prettyPrintServerInfo(dockerCli command.Cli, info types.Info) []error {
 	return errs
 }
 
-// nolint: gocyclo
-func printSwarmInfo(dockerCli command.Cli, info types.Info) {
-	if info.Swarm.LocalNodeState == swarm.LocalNodeStateInactive || info.Swarm.LocalNodeState == swarm.LocalNodeStateLocked {
-		return
-	}
-	fmt.Fprintln(dockerCli.Out(), "  NodeID:", info.Swarm.NodeID)
-	if info.Swarm.Error != "" {
-		fmt.Fprintln(dockerCli.Out(), "  Error:", info.Swarm.Error)
-	}
-	fmt.Fprintln(dockerCli.Out(), "  Is Manager:", info.Swarm.ControlAvailable)
-	if info.Swarm.Cluster != nil && info.Swarm.ControlAvailable && info.Swarm.Error == "" && info.Swarm.LocalNodeState != swarm.LocalNodeStateError {
-		fmt.Fprintln(dockerCli.Out(), "  ClusterID:", info.Swarm.Cluster.ID)
-		fmt.Fprintln(dockerCli.Out(), "  Managers:", info.Swarm.Managers)
-		fmt.Fprintln(dockerCli.Out(), "  Nodes:", info.Swarm.Nodes)
-		var strAddrPool strings.Builder
-		if info.Swarm.Cluster.DefaultAddrPool != nil {
-			for _, p := range info.Swarm.Cluster.DefaultAddrPool {
-				strAddrPool.WriteString(p + "  ")
-			}
-			fmt.Fprintln(dockerCli.Out(), "  Default Address Pool:", strAddrPool.String())
-			fmt.Fprintln(dockerCli.Out(), "  SubnetSize:", info.Swarm.Cluster.SubnetSize)
-		}
-		if info.Swarm.Cluster.DataPathPort > 0 {
-			fmt.Fprintln(dockerCli.Out(), "  Data Path Port:", info.Swarm.Cluster.DataPathPort)
-		}
-		fmt.Fprintln(dockerCli.Out(), "  Orchestration:")
-
-		taskHistoryRetentionLimit := int64(0)
-		if info.Swarm.Cluster.Spec.Orchestration.TaskHistoryRetentionLimit != nil {
-			taskHistoryRetentionLimit = *info.Swarm.Cluster.Spec.Orchestration.TaskHistoryRetentionLimit
-		}
-		fmt.Fprintln(dockerCli.Out(), "   Task History Retention Limit:", taskHistoryRetentionLimit)
-		fmt.Fprintln(dockerCli.Out(), "  Raft:")
-		fmt.Fprintln(dockerCli.Out(), "   Snapshot Interval:", info.Swarm.Cluster.Spec.Raft.SnapshotInterval)
-		if info.Swarm.Cluster.Spec.Raft.KeepOldSnapshots != nil {
-			fmt.Fprintf(dockerCli.Out(), "   Number of Old Snapshots to Retain: %d\n", *info.Swarm.Cluster.Spec.Raft.KeepOldSnapshots)
-		}
-		fmt.Fprintln(dockerCli.Out(), "   Heartbeat Tick:", info.Swarm.Cluster.Spec.Raft.HeartbeatTick)
-		fmt.Fprintln(dockerCli.Out(), "   Election Tick:", info.Swarm.Cluster.Spec.Raft.ElectionTick)
-		fmt.Fprintln(dockerCli.Out(), "  Dispatcher:")
-		fmt.Fprintln(dockerCli.Out(), "   Heartbeat Period:", units.HumanDuration(info.Swarm.Cluster.Spec.Dispatcher.HeartbeatPeriod))
-		fmt.Fprintln(dockerCli.Out(), "  CA Configuration:")
-		fmt.Fprintln(dockerCli.Out(), "   Expiry Duration:", units.HumanDuration(info.Swarm.Cluster.Spec.CAConfig.NodeCertExpiry))
-		fmt.Fprintln(dockerCli.Out(), "   Force Rotate:", info.Swarm.Cluster.Spec.CAConfig.ForceRotate)
-		if caCert := strings.TrimSpace(info.Swarm.Cluster.Spec.CAConfig.SigningCACert); caCert != "" {
-			fmt.Fprintf(dockerCli.Out(), "   Signing CA Certificate: \n%s\n\n", caCert)
-		}
-		if len(info.Swarm.Cluster.Spec.CAConfig.ExternalCAs) > 0 {
-			fmt.Fprintln(dockerCli.Out(), "   External CAs:")
-			for _, entry := range info.Swarm.Cluster.Spec.CAConfig.ExternalCAs {
-				fmt.Fprintf(dockerCli.Out(), "     %s: %s\n", entry.Protocol, entry.URL)
-			}
-		}
-		fmt.Fprintln(dockerCli.Out(), "  Autolock Managers:", info.Swarm.Cluster.Spec.EncryptionConfig.AutoLockManagers)
-		fmt.Fprintln(dockerCli.Out(), "  Root Rotation In Progress:", info.Swarm.Cluster.RootRotationInProgress)
-	}
-	fmt.Fprintln(dockerCli.Out(), "  Node Address:", info.Swarm.NodeAddr)
-	if len(info.Swarm.RemoteManagers) > 0 {
-		managers := []string{}
-		for _, entry := range info.Swarm.RemoteManagers {
-			managers = append(managers, entry.Addr)
-		}
-		sort.Strings(managers)
-		fmt.Fprintln(dockerCli.Out(), "  Manager Addresses:")
-		for _, entry := range managers {
-			fmt.Fprintf(dockerCli.Out(), "   %s\n", entry)
-		}
-	}
-}
-
 func printServerWarnings(dockerCli command.Cli, info types.Info) {
 	if len(info.Warnings) > 0 {
 		fmt.Fprintln(dockerCli.Err(), strings.Join(info.Warnings, "\n"))
@@ -477,11 +380,6 @@ func getBackingFs(info types.Info) string {
 }
 
 func formatInfo(dockerCli command.Cli, info info, format string) error {
-	// Ensure slice/array fields render as `[]` not `null`
-	if info.ClientInfo != nil && info.ClientInfo.Plugins == nil {
-		info.ClientInfo.Plugins = make([]pluginmanager.Plugin, 0)
-	}
-
 	tmpl, err := templates.Parse(format)
 	if err != nil {
 		return cli.StatusError{StatusCode: 64,
